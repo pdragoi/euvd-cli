@@ -269,7 +269,7 @@ impl Default for LookupState {
         Self {
             input: String::new(),
             cursor: 0,
-            editing: true,
+            editing: false,
             loading: false,
             seq: 0,
             error: None,

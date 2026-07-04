@@ -979,6 +979,7 @@ mod tests {
         app.tab = TAB_LOOKUP;
         app.lookup.input = "EUVD-2026-41256".into();
         app.lookup.cursor = 4;
+        app.lookup.editing = true;
         app.lookup.error = Some("no record found".into());
         assert_snapshot!(render(&mut app, 100, 30).backend());
     }
