@@ -781,6 +781,8 @@ fn draw_help(frame: &mut Frame) {
         section(" General"),
         key("?", "toggle this help"),
         key("q, Ctrl-C", "quit"),
+        key("Ctrl+", "zoom in"),
+        key("Ctrl-", "zoom out"),
     ];
     let para = Paragraph::new(lines).block(
         Block::bordered()
