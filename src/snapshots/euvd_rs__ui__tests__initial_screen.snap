@@ -3,7 +3,7 @@ source: src/ui.rs
 expression: "render(&mut App::new(), 100, 30).backend()"
 ---
 " EUVD    1 Latest │ 2 Latest Exploited │ 3 Latest Critical │ 4 Search │ 5 Lookup                    "
-"┌ Latest · 0 records (API returns at most 8 I think) ──────────────────────────────────────────────┐"
+"┌ Latest · 0 records (API returns at most 8 according to current docs) ────────────────────────────┐"
 "│EUVD ID           CVE             CVSS  EPSS   Published    Description                           │"
 "│                                                                                                  │"
 "│                                                                                                  │"

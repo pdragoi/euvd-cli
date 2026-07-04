@@ -197,7 +197,7 @@ fn draw_feed(frame: &mut Frame, app: &mut App, idx: usize, area: Rect) {
         format!(" {} · no records ", TABS[idx])
     } else {
         format!(
-            " {} · {} records (API returns at most 8 I think) ",
+            " {} · {} records (API returns at most 8 according to current docs) ",
             TABS[idx],
             feed.items.len()
         )

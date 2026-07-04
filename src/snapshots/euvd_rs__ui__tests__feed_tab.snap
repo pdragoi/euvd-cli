@@ -3,7 +3,7 @@ source: src/ui.rs
 expression: "render(&mut app, 100, 30).backend()"
 ---
 " EUVD    1 Latest │ 2 Latest Exploited │ 3 Latest Critical │ 4 Search │ 5 Lookup                    "
-"┌ Latest · 1 records (API returns at most 8 I think) ──────────────────────────────────────────────┐"
+"┌ Latest · 1 records (API returns at most 8 according to current docs) ────────────────────────────┐"
 "│  EUVD ID           CVE             CVSS  EPSS   Published    Description                         │"
 "│▶ EUVD-2026-41256   CVE-2026-33592  7.5   1.5%   Jul 2, 2026  An unauthenticated remote attacker c│"
 "│                                                                                                  │"
