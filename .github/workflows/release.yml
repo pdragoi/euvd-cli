@@ -1,18 +1,51 @@
 name: Release
 
+# Two ways to release, both driven by the version in Cargo.toml:
+#  1. Push a tag `v<version>` (or create a GitHub release in the UI, which
+#     pushes the tag) — the workflow verifies the tag matches Cargo.toml.
+#  2. Manually run the workflow (Actions → Release → Run workflow) on a
+#     branch — it creates the `v<version>` tag itself if missing.
+# Publishing is idempotent: if the release already exists, freshly built
+# assets are uploaded to it (overwriting same-named ones) instead of failing.
+
 on:
   push:
     tags: ["v*"]
-  # Manual runs build and upload artifacts but skip the GitHub Release step.
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   BIN: euvd-rs
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from Cargo.toml
+        id: meta
+        run: |
+          VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Cargo.toml version: ${VERSION}"
+
+      - name: Ensure tag matches Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "${{ steps.meta.outputs.tag }}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml version (expected ${{ steps.meta.outputs.tag }}). Bump Cargo.toml or fix the tag."
+            exit 1
+          fi
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -22,7 +55,7 @@ jobs:
       - run: cargo clippy --locked -- -D warnings
 
   build:
-    needs: test
+    needs: [version, test]
     strategy:
       fail-fast: false
       matrix:
@@ -38,6 +71,8 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +94,7 @@ jobs:
           mkdir -p dist
           cp "target/${{ matrix.target }}/release/${BIN}" dist/
           cp README.md dist/
-          tar -C dist -czf "${BIN}-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" "${BIN}" README.md
+          tar -C dist -czf "${BIN}-${RELEASE_TAG}-${{ matrix.target }}.tar.gz" "${BIN}" README.md
 
       - name: Package (windows)
         if: runner.os == 'Windows'
@@ -68,7 +103,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/$env:BIN.exe" dist/
           Copy-Item README.md dist/
-          Compress-Archive -Path dist/* -DestinationPath "$env:BIN-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          Compress-Archive -Path dist/* -DestinationPath "$env:BIN-$env:RELEASE_TAG-${{ matrix.target }}.zip"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -79,9 +114,11 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version, build]
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.version.outputs.tag }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -91,11 +128,17 @@ jobs:
       - name: Generate checksums
         run: cd artifacts && sha256sum * > SHA256SUMS
 
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Create release, or upload to the existing one
         run: |
-          gh release create "${{ github.ref_name }}" artifacts/* \
-            --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — uploading assets to it."
+            gh release upload "$TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            # --target is only used when the tag itself doesn't exist yet
+            # (workflow_dispatch); it pins the new tag to the built commit.
+            gh release create "$TAG" artifacts/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes \
+              --target "$GITHUB_SHA"
+          fi
