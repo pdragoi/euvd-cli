@@ -82,7 +82,7 @@ pub enum Fetched {
     },
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SearchFocus {
     Filters(usize),
     Results,
@@ -949,4 +949,607 @@ pub fn open_url(url: &str) {
         c
     };
     let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::crossterm::event::KeyEventKind;
+
+    // These tests must stay offline: avoid paths that spawn fetch threads
+    // (refresh_feed, run_search with a valid query, open_detail, and the
+    // assigner fetch). The fixtures below mark everything as already loaded.
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.on_key(key(code));
+    }
+
+    fn type_str(app: &mut App, s: &str) {
+        for c in s.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    /// App with all feeds marked loaded so tab switching never fetches.
+    fn app() -> App {
+        let mut app = App::new();
+        for f in &mut app.feeds {
+            f.loaded = true;
+        }
+        app
+    }
+
+    fn vuln(id: &str) -> Vulnerability {
+        Vulnerability {
+            id: id.into(),
+            ..Default::default()
+        }
+    }
+
+    // --- pure helpers ------------------------------------------------------
+
+    #[test]
+    fn field_slot_skips_the_exploited_tristate() {
+        assert_eq!(field_slot(0), Some(0));
+        assert_eq!(field_slot(FILTER_EXPLOITED - 1), Some(FILTER_EXPLOITED - 1));
+        assert_eq!(field_slot(FILTER_EXPLOITED), None);
+        assert_eq!(field_slot(FILTER_EXPLOITED + 1), Some(FILTER_EXPLOITED));
+        assert_eq!(field_slot(N_FILTERS - 1), Some(N_FILTERS - 2));
+    }
+
+    #[test]
+    fn byte_idx_handles_multibyte_chars() {
+        let s = "aéb";
+        assert_eq!(byte_idx(s, 0), 0);
+        assert_eq!(byte_idx(s, 1), 1);
+        assert_eq!(byte_idx(s, 2), 3); // é is two bytes
+        assert_eq!(byte_idx(s, 3), 4);
+        assert_eq!(byte_idx(s, 99), s.len());
+    }
+
+    #[test]
+    fn iso_date_validation() {
+        assert!(is_iso_date("2026-07-05"));
+        assert!(!is_iso_date("2026-7-05"));
+        assert!(!is_iso_date("20260705"));
+        assert!(!is_iso_date("2026-07-055"));
+        assert!(!is_iso_date("abcd-ef-gh"));
+        assert!(!is_iso_date(""));
+    }
+
+    // --- SearchState -------------------------------------------------------
+
+    #[test]
+    fn assigner_entries_parses_comma_list() {
+        let mut s = SearchState::default();
+        assert!(s.assigner_entries().is_empty());
+        s.fields[field_slot(FILTER_ASSIGNER).unwrap()] = " ENISA , CERT-PL ,, ".into();
+        assert_eq!(s.assigner_entries(), ["ENISA", "CERT-PL"]);
+    }
+
+    #[test]
+    fn toggle_assigner_adds_removes_and_keeps_custom_entries() {
+        let mut s = SearchState::default();
+        let slot = field_slot(FILTER_ASSIGNER).unwrap();
+        s.fields[slot] = "my-custom-cna".into();
+
+        s.toggle_assigner("ENISA");
+        assert_eq!(s.fields[slot], "my-custom-cna,ENISA");
+        assert_eq!(s.cursor, s.fields[slot].chars().count());
+
+        // Removal is case-insensitive and leaves the custom entry alone.
+        s.toggle_assigner("enisa");
+        assert_eq!(s.fields[slot], "my-custom-cna");
+    }
+
+    #[test]
+    fn total_pages_rounds_up_and_never_hits_zero() {
+        let mut s = SearchState::default();
+        assert_eq!(s.total_pages(), 1);
+        s.total = u64::from(PAGE_SIZE);
+        assert_eq!(s.total_pages(), 1);
+        s.total = u64::from(PAGE_SIZE) + 1;
+        assert_eq!(s.total_pages(), 2);
+        s.total = 123;
+        assert_eq!(s.total_pages(), 3);
+    }
+
+    #[test]
+    fn build_query_collects_all_filters() {
+        let s = SearchState {
+            fields: [
+                "ssl",
+                "redhat",
+                "openssl",
+                "ENISA, CERT-PL",
+                "2026-01-01",
+                "2026-12-31",
+                "7.5",
+                "10",
+                "50",
+                "100",
+            ]
+            .map(String::from),
+            exploited: Some(true),
+            ..SearchState::default()
+        };
+
+        let q = s.build_query(2).unwrap();
+        assert_eq!(q.text, "ssl");
+        assert_eq!(q.vendor, "redhat");
+        assert_eq!(q.product, "openssl");
+        assert_eq!(q.assigners, ["ENISA", "CERT-PL"]);
+        assert_eq!(q.from_date, "2026-01-01");
+        assert_eq!(q.to_date, "2026-12-31");
+        assert_eq!(q.exploited, Some(true));
+        assert_eq!(q.from_score, Some(7.5));
+        assert_eq!(q.to_score, Some(10.0));
+        assert_eq!(q.from_epss, Some(50));
+        assert_eq!(q.to_epss, Some(100));
+        assert_eq!(q.page, 2);
+        assert_eq!(q.size, PAGE_SIZE);
+    }
+
+    #[test]
+    fn build_query_rejects_invalid_input() {
+        let bad = [
+            (4, "07/05/2026", "From date"),
+            (7, "11", "CVSS min"),
+            (7, "abc", "CVSS min"),
+            (9, "101", "EPSS% min"),
+        ];
+        for (filter, value, label) in bad {
+            let mut s = SearchState::default();
+            s.fields[field_slot(filter).unwrap()] = value.into();
+            let err = s.build_query(0).unwrap_err();
+            assert!(err.contains(label), "{err:?} should mention {label}");
+        }
+    }
+
+    #[test]
+    fn detail_references_split_and_trim() {
+        let d = DetailContent::Vuln(Vulnerability {
+            references: "https://a\n  \n https://b \n".into(),
+            ..Default::default()
+        });
+        assert_eq!(d.references(), ["https://a", "https://b"]);
+    }
+
+    // --- key handling ------------------------------------------------------
+
+    #[test]
+    fn release_events_are_ignored() {
+        let mut app = app();
+        app.on_key(KeyEvent::new_with_kind(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert!(!app.quit);
+    }
+
+    #[test]
+    fn ctrl_c_quits_even_while_editing() {
+        let mut app = app();
+        app.tab = TAB_LOOKUP;
+        app.lookup.editing = true;
+        app.on_key(ctrl('c'));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn q_quits_on_lists_but_types_into_filters() {
+        let mut on_list = app();
+        press(&mut on_list, KeyCode::Char('q'));
+        assert!(on_list.quit);
+
+        let mut in_filters = app();
+        in_filters.tab = TAB_SEARCH;
+        in_filters.search.focus = SearchFocus::Filters(0);
+        press(&mut in_filters, KeyCode::Char('q'));
+        assert!(!in_filters.quit);
+        assert_eq!(in_filters.search.fields[0], "q");
+    }
+
+    #[test]
+    fn tab_keys_switch_tabs() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('5'));
+        assert_eq!(app.tab, TAB_LOOKUP);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.tab, 0);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.tab, TABS.len() - 1);
+        press(&mut app, KeyCode::Char('4'));
+        assert_eq!(app.tab, TAB_SEARCH);
+    }
+
+    #[test]
+    fn feed_selection_moves_and_clamps() {
+        let mut app = app();
+        app.feeds[0].items = vec![vuln("a"), vuln("b"), vuln("c")];
+        app.feeds[0].table.select(Some(0));
+
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.feeds[0].table.selected(), Some(1));
+        press(&mut app, KeyCode::Char('G'));
+        assert_eq!(app.feeds[0].table.selected(), Some(2));
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.feeds[0].table.selected(), Some(2));
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.feeds[0].table.selected(), Some(0));
+        press(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.feeds[0].table.selected(), Some(0));
+    }
+
+    #[test]
+    fn selection_is_a_noop_on_an_empty_list() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.feeds[0].table.selected(), None);
+    }
+
+    #[test]
+    fn filter_editing_supports_cursor_and_multibyte() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.focus = SearchFocus::Filters(0);
+
+        type_str(&mut app, "café");
+        assert_eq!(app.search.fields[0], "café");
+        assert_eq!(app.search.cursor, 4);
+
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Backspace); // removes the f
+        assert_eq!(app.search.fields[0], "caé");
+        press(&mut app, KeyCode::Delete); // removes the é
+        assert_eq!(app.search.fields[0], "ca");
+
+        press(&mut app, KeyCode::Home);
+        assert_eq!(app.search.cursor, 0);
+        press(&mut app, KeyCode::End);
+        assert_eq!(app.search.cursor, 2);
+        press(&mut app, KeyCode::Right); // clamped at the end
+        assert_eq!(app.search.cursor, 2);
+
+        app.on_key(ctrl('u'));
+        assert_eq!(app.search.fields[0], "");
+        assert_eq!(app.search.cursor, 0);
+    }
+
+    #[test]
+    fn filter_focus_cycles_and_esc_returns_to_results() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.focus = SearchFocus::Filters(0);
+        app.search.fields[1] = "vendor".into();
+
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.search.focus, SearchFocus::Filters(1));
+        assert_eq!(app.search.cursor, 6); // cursor lands at the end
+
+        press(&mut app, KeyCode::BackTab);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.search.focus, SearchFocus::Filters(N_FILTERS - 1));
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.search.focus, SearchFocus::Results);
+    }
+
+    #[test]
+    fn exploited_filter_cycles_tristate() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.focus = SearchFocus::Filters(FILTER_EXPLOITED);
+
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.search.exploited, Some(true));
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.search.exploited, Some(false));
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.search.exploited, None);
+
+        press(&mut app, KeyCode::Char(' '));
+        app.on_key(ctrl('u'));
+        assert_eq!(app.search.exploited, None);
+    }
+
+    #[test]
+    fn enter_with_invalid_filter_reports_error_and_keeps_focus() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.focus = SearchFocus::Filters(4);
+        app.search.fields[4] = "07/05/2026".into();
+
+        press(&mut app, KeyCode::Enter);
+        assert!(app.search.error.as_ref().unwrap().contains("From date"));
+        assert_eq!(app.search.focus, SearchFocus::Filters(4));
+        assert!(!app.search.loading);
+        assert!(!app.search.searched);
+    }
+
+    #[test]
+    fn help_overlay_opens_scrolls_and_closes() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('?'));
+        assert!(matches!(app.overlay, Overlay::Help { scroll: 0 }));
+
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::PageDown);
+        assert!(matches!(app.overlay, Overlay::Help { scroll: 11 }));
+        press(&mut app, KeyCode::Char('G'));
+        assert!(matches!(app.overlay, Overlay::Help { scroll: u16::MAX }));
+        press(&mut app, KeyCode::Char('g'));
+        assert!(matches!(app.overlay, Overlay::Help { scroll: 0 }));
+
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn question_mark_types_while_a_field_is_focused() {
+        let mut app = app();
+        app.tab = TAB_LOOKUP;
+        app.lookup.editing = true;
+        press(&mut app, KeyCode::Char('?'));
+        assert!(matches!(app.overlay, Overlay::None));
+        assert_eq!(app.lookup.input, "?");
+    }
+
+    #[test]
+    fn detail_overlay_scrolls_and_closes() {
+        let mut app = app();
+        app.overlay = Overlay::Detail(Box::new(DetailState {
+            content: DetailContent::Vuln(vuln("EUVD-1")),
+            scroll: 0,
+            enriching: false,
+        }));
+
+        press(&mut app, KeyCode::PageDown);
+        press(&mut app, KeyCode::Char('k'));
+        let Overlay::Detail(d) = &app.overlay else {
+            panic!("detail overlay closed unexpectedly");
+        };
+        assert_eq!(d.scroll, 9);
+
+        press(&mut app, KeyCode::Char('q'));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn lookup_editing_keys() {
+        let mut app = app();
+        app.tab = TAB_LOOKUP;
+
+        press(&mut app, KeyCode::Char('i'));
+        assert!(app.lookup.editing);
+        type_str(&mut app, "euvd-1");
+        assert_eq!(app.lookup.input, "euvd-1");
+
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.lookup.input, "euvd-");
+        app.on_key(ctrl('u'));
+        assert_eq!(app.lookup.input, "");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.lookup.editing);
+    }
+
+    #[test]
+    fn lookup_with_blank_input_does_not_fetch() {
+        let mut app = app();
+        app.tab = TAB_LOOKUP;
+        app.lookup.input = "   ".into();
+        press(&mut app, KeyCode::Enter);
+        assert!(!app.lookup.loading);
+    }
+
+    #[test]
+    fn assigner_picker_toggles_and_clears() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.focus = SearchFocus::Filters(FILTER_ASSIGNER);
+        app.assigner_opts.loaded = true; // prevents the fetch on open
+        app.assigner_opts.names = ["ENISA", "CERT-PL", "MICROSOFT"].map(String::from).into();
+
+        press(&mut app, KeyCode::Char(' '));
+        assert!(matches!(app.overlay, Overlay::AssignerPicker { cursor: 0 }));
+
+        // Navigation clamps to the option list.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('G'));
+        press(&mut app, KeyCode::Char('j'));
+        assert!(matches!(app.overlay, Overlay::AssignerPicker { cursor: 2 }));
+
+        let slot = field_slot(FILTER_ASSIGNER).unwrap();
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.search.fields[slot], "MICROSOFT");
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.search.fields[slot], "");
+
+        press(&mut app, KeyCode::Char(' '));
+        app.on_key(ctrl('u'));
+        assert_eq!(app.search.fields[slot], "");
+
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    // --- fetched-message handling -------------------------------------------
+
+    #[test]
+    fn search_response_updates_state() {
+        let mut app = app();
+        app.search.loading = true;
+        app.on_fetched(Fetched::Search {
+            seq: 0,
+            page: 2,
+            result: Ok(SearchResponse {
+                items: vec![vuln("a"), vuln("b")],
+                total: 123,
+            }),
+        });
+
+        let s = &app.search;
+        assert!(!s.loading);
+        assert_eq!(s.items.len(), 2);
+        assert_eq!(s.total, 123);
+        assert_eq!(s.page, 2);
+        assert_eq!(s.table.selected(), Some(0));
+        assert!(s.last_updated.is_some());
+    }
+
+    #[test]
+    fn stale_responses_are_discarded() {
+        let mut app = app();
+        app.search.seq = 2;
+        app.search.loading = true;
+        app.on_fetched(Fetched::Search {
+            seq: 1,
+            page: 0,
+            result: Ok(SearchResponse {
+                items: vec![vuln("stale")],
+                total: 1,
+            }),
+        });
+        assert!(app.search.loading); // still waiting for seq 2
+        assert!(app.search.items.is_empty());
+    }
+
+    #[test]
+    fn search_not_found_clears_results() {
+        let mut app = app();
+        app.search.items = vec![vuln("old")];
+        app.search.total = 1;
+        app.search.table.select(Some(0));
+        app.on_fetched(Fetched::Search {
+            seq: 0,
+            page: 0,
+            result: Err(ApiError::NotFound),
+        });
+
+        assert!(app.search.items.is_empty());
+        assert_eq!(app.search.total, 0);
+        assert_eq!(app.search.table.selected(), None);
+        assert!(app.search.last_updated.is_some());
+    }
+
+    #[test]
+    fn search_error_keeps_previous_results() {
+        let mut app = app();
+        app.search.items = vec![vuln("old")];
+        app.on_fetched(Fetched::Search {
+            seq: 0,
+            page: 0,
+            result: Err(ApiError::Http("HTTP 500".into())),
+        });
+        assert!(app.search.error.as_ref().unwrap().contains("HTTP 500"));
+        assert_eq!(app.search.items.len(), 1);
+    }
+
+    #[test]
+    fn feed_response_updates_state() {
+        let mut app = App::new();
+        app.feeds[1].loading = true;
+        app.on_fetched(Fetched::Feed {
+            idx: 1,
+            seq: 0,
+            result: Ok(vec![vuln("a")]),
+        });
+
+        let f = &app.feeds[1];
+        assert!(!f.loading);
+        assert!(f.loaded);
+        assert_eq!(f.items.len(), 1);
+        assert_eq!(f.table.selected(), Some(0));
+        assert!(f.last_updated.is_some());
+    }
+
+    #[test]
+    fn enrich_only_applies_to_the_open_detail() {
+        let mut app = app();
+        app.overlay = Overlay::Detail(Box::new(DetailState {
+            content: DetailContent::Vuln(vuln("EUVD-1")),
+            scroll: 0,
+            enriching: true,
+        }));
+
+        // A record for a different id (e.g. after closing/reopening) is ignored.
+        app.on_fetched(Fetched::Enrich {
+            id: "EUVD-2".into(),
+            result: Ok(vuln("EUVD-2")),
+        });
+        let Overlay::Detail(d) = &app.overlay else {
+            panic!("detail overlay closed unexpectedly");
+        };
+        assert!(d.enriching);
+
+        let full = Vulnerability {
+            description: "full record".into(),
+            ..vuln("EUVD-1")
+        };
+        app.on_fetched(Fetched::Enrich {
+            id: "EUVD-1".into(),
+            result: Ok(full),
+        });
+        let Overlay::Detail(d) = &app.overlay else {
+            panic!("detail overlay closed unexpectedly");
+        };
+        assert!(!d.enriching);
+        let DetailContent::Vuln(v) = &d.content else {
+            panic!("expected a vulnerability");
+        };
+        assert_eq!(v.description, "full record");
+    }
+
+    #[test]
+    fn lookup_response_opens_detail() {
+        let mut app = app();
+        app.lookup.loading = true;
+        app.on_fetched(Fetched::LookupVuln {
+            seq: 0,
+            result: Ok(vuln("EUVD-1")),
+        });
+
+        assert!(!app.lookup.loading);
+        assert!(app.lookup.last_updated.is_some());
+        assert!(matches!(app.overlay, Overlay::Detail(_)));
+    }
+
+    #[test]
+    fn lookup_error_is_reported() {
+        let mut app = app();
+        app.lookup.loading = true;
+        app.on_fetched(Fetched::LookupVuln {
+            seq: 0,
+            result: Err(ApiError::NotFound),
+        });
+
+        assert!(!app.lookup.loading);
+        assert!(app.lookup.error.is_some());
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn assigner_names_are_stored_once_loaded() {
+        let mut app = app();
+        app.assigner_opts.loading = true;
+        app.on_fetched(Fetched::Assigners {
+            seq: 0,
+            result: Ok(vec!["ENISA".into()]),
+        });
+
+        let o = &app.assigner_opts;
+        assert!(!o.loading);
+        assert!(o.loaded);
+        assert_eq!(o.names, ["ENISA"]);
+    }
 }
