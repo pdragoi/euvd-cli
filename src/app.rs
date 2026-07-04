@@ -321,7 +321,9 @@ pub struct DetailState {
 
 pub enum Overlay {
     None,
-    Help,
+    Help {
+        scroll: u16,
+    },
     Detail(Box<DetailState>),
     /// Multiselect popup for the assigner filter; `cursor` is the highlighted
     /// option index.
@@ -590,17 +592,12 @@ impl App {
             return;
         }
         match &self.overlay {
-            Overlay::Help => match key.code {
-                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Enter => {
-                    self.overlay = Overlay::None;
-                }
-                _ => {}
-            },
+            Overlay::Help { .. } => self.on_key_help(key),
             Overlay::Detail(_) => self.on_key_detail(key),
             Overlay::AssignerPicker { .. } => self.on_key_assigner_picker(key),
             Overlay::None => {
                 if key.code == KeyCode::Char('?') && !self.text_input_active() {
-                    self.overlay = Overlay::Help;
+                    self.overlay = Overlay::Help { scroll: 0 };
                     return;
                 }
                 match self.tab {
@@ -862,6 +859,25 @@ impl App {
                 self.search.fields[slot].clear();
                 self.search.cursor = 0;
             }
+            _ => {}
+        }
+    }
+
+    fn on_key_help(&mut self, key: KeyEvent) {
+        let Overlay::Help { scroll } = &mut self.overlay else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Enter => {
+                self.overlay = Overlay::None;
+            }
+            KeyCode::Char('j') | KeyCode::Down => *scroll = scroll.saturating_add(1),
+            KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::Char('g') | KeyCode::Home => *scroll = 0,
+            // Clamped to the real bottom during rendering.
+            KeyCode::Char('G') | KeyCode::End => *scroll = u16::MAX,
             _ => {}
         }
     }

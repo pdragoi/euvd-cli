@@ -38,7 +38,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     match &mut app.overlay {
         Overlay::None => {}
-        Overlay::Help => draw_help(frame),
+        Overlay::Help { .. } => draw_help(frame, app),
         Overlay::Detail(_) => draw_detail(frame, app),
         Overlay::AssignerPicker { .. } => draw_assigner_picker(frame, app),
     }
@@ -465,9 +465,9 @@ fn draw_assigner_picker(frame: &mut Frame, app: &App) {
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match &app.overlay {
-        Overlay::Help => "Esc close",
-        Overlay::Detail(_) => "j/k scroll · g/G top/bottom · 1-9/o open reference · Esc/q back",
-        Overlay::AssignerPicker { .. } => "j/k move · Space toggle · Ctrl-U clear · Enter/Esc done",
+        Overlay::Help { .. } => "j/k, ↑↓ scroll · g/G top/bottom · Esc close",
+        Overlay::Detail(_) => "j/k, ↑↓ scroll · g/G top/bottom · 1-9/o open reference · Esc/q back",
+        Overlay::AssignerPicker { .. } => "j/k, ↑↓ move · Space toggle · Ctrl-U clear · Enter/Esc done",
         Overlay::None => match app.tab {
             TAB_SEARCH => match app.search.focus {
                 SearchFocus::Filters(i) if i == FILTER_EXPLOITED => {
@@ -480,12 +480,12 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
                     "type to edit · Tab/↑↓ move · Enter search · Ctrl-U clear · Esc results"
                 }
                 SearchFocus::Results => {
-                    "j/k move · Enter details · n/p page · / filters · 1-5/Tab tabs · r rerun · ? help · q quit"
+                    "j/k, ↑↓ move · Enter details · n/p, ←→ page · / filters · 1-5/Tab tabs · r rerun · ? help · q quit"
                 }
             },
             TAB_LOOKUP if app.lookup.editing => "type an id · Enter fetch · Esc leave input",
             TAB_LOOKUP => "i edit · Enter fetch · 1-5/Tab tabs · ? help · q quit",
-            _ => "j/k move · Enter details · r refresh · 1-5/Tab tabs · ? help · q quit",
+            _ => "j/k, ↑↓ move · Enter details · r refresh · 1-5/Tab tabs · ? help · q quit",
         },
     };
 
@@ -747,7 +747,10 @@ fn push_references<'a>(lines: &mut Vec<Line<'static>>, refs: impl Iterator<Item 
 
 // --- help overlay ------------------------------------------------------------
 
-fn draw_help(frame: &mut Frame) {
+fn draw_help(frame: &mut Frame, app: &mut App) {
+    let Overlay::Help { scroll } = &mut app.overlay else {
+        return;
+    };
     let area = centered(frame.area(), 60, 70).intersection(frame.area());
     frame.render_widget(Clear, area);
 
@@ -768,7 +771,7 @@ fn draw_help(frame: &mut Frame) {
         Line::default(),
         section(" Search"),
         key("/", "focus filters"),
-        key("n/p", "next / previous page"),
+        key("n/p, ←→", "next / previous page"),
         key("Space", "cycle exploited / pick assigners"),
         key("←/→", "move cursor in a text input"),
         key("Ctrl-U", "clear focused field"),
@@ -784,12 +787,19 @@ fn draw_help(frame: &mut Frame) {
         key("Ctrl+", "zoom in"),
         key("Ctrl-", "zoom out"),
     ];
-    let para = Paragraph::new(lines).block(
-        Block::bordered()
-            .title(" Help ".bold().fg(ACCENT))
-            .border_style(Style::new().fg(ACCENT)),
-    );
+    let block = Block::bordered()
+        .title(" Help ".bold().fg(ACCENT))
+        .border_style(Style::new().fg(ACCENT));
+    let inner = block.inner(area);
+
+    // Clamp scrolling so `G` lands on the last line, not past it.
+    let max_scroll = lines.len().saturating_sub(inner.height as usize) as u16;
+    *scroll = (*scroll).min(max_scroll);
+
+    let total = lines.len();
+    let para = Paragraph::new(lines).block(block).scroll((*scroll, 0));
     frame.render_widget(para, area);
+    render_scrollbar(frame, area, total, inner.height as usize, *scroll as usize);
 }
 
 fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
@@ -941,7 +951,15 @@ mod tests {
     #[test]
     fn help_overlay() {
         let mut app = app_with_results();
-        app.overlay = Overlay::Help;
+        app.overlay = Overlay::Help { scroll: 0 };
+        assert_snapshot!(render(&mut app, 100, 30).backend());
+    }
+
+    #[test]
+    fn help_overlay_scrolled_to_bottom() {
+        let mut app = app_with_results();
+        // `G` sets u16::MAX; rendering clamps it to the last line.
+        app.overlay = Overlay::Help { scroll: u16::MAX };
         assert_snapshot!(render(&mut app, 100, 30).backend());
     }
 
