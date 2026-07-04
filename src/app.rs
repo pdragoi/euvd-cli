@@ -437,7 +437,7 @@ impl App {
         // EUVD-* ids resolve via /enisaid, anything else via /advisory.
         if id.to_ascii_uppercase().starts_with("EUVD-") {
             thread::spawn(move || {
-                let result = client.by_enisa_id(&id);
+                let result = client.by_enisa_id(&id.to_ascii_uppercase());
                 let _ = tx.send(Fetched::LookupVuln { seq, result });
             });
         } else {
