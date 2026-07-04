@@ -467,7 +467,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match &app.overlay {
         Overlay::Help { .. } => "j/k, ↑↓ scroll · g/G top/bottom · Esc close",
         Overlay::Detail(_) => "j/k, ↑↓ scroll · g/G top/bottom · 1-9/o open reference · Esc/q back",
-        Overlay::AssignerPicker { .. } => "j/k, ↑↓ move · Space toggle · Ctrl-U clear · Enter/Esc done",
+        Overlay::AssignerPicker { .. } => {
+            "j/k, ↑↓ move · Space toggle · Ctrl-U clear · Enter/Esc done"
+        }
         Overlay::None => match app.tab {
             TAB_SEARCH => match app.search.focus {
                 SearchFocus::Filters(i) if i == FILTER_EXPLOITED => {
