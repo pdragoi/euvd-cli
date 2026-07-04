@@ -2,10 +2,13 @@
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap},
+    widgets::{
+        Block, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState, Tabs, Wrap,
+    },
 };
 
 use crate::api::{Advisory, Vulnerability};
@@ -173,8 +176,14 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
             s.total_pages()
         )
     };
-    let table = vuln_table(&app.search.items, title, !filters_focused);
-    frame.render_stateful_widget(table, results_area, &mut app.search.table);
+    render_vuln_table(
+        frame,
+        results_area,
+        &app.search.items,
+        title,
+        !filters_focused,
+        &mut app.search.table,
+    );
 }
 
 // --- feed tabs --------------------------------------------------------------
@@ -193,8 +202,7 @@ fn draw_feed(frame: &mut Frame, app: &mut App, idx: usize, area: Rect) {
             feed.items.len()
         )
     };
-    let table = vuln_table(&feed.items, title, true);
-    frame.render_stateful_widget(table, area, &mut feed.table);
+    render_vuln_table(frame, area, &feed.items, title, true, &mut feed.table);
 }
 
 // --- lookup tab -------------------------------------------------------------
@@ -326,6 +334,41 @@ fn cursor_spans(value: &str, cursor: usize, min_w: usize, style: Style) -> Vec<S
         ),
         Span::styled(format!("{after}{pad}"), style),
     ]
+}
+
+/// Renders a vulnerability table plus, when the rows overflow the viewport, a
+/// scrollbar on the right border indicating there is more to scroll to.
+fn render_vuln_table(
+    frame: &mut Frame,
+    area: Rect,
+    items: &[Vulnerability],
+    title: String,
+    focused: bool,
+    state: &mut TableState,
+) {
+    let table = vuln_table(items, title, focused);
+    frame.render_stateful_widget(table, area, state);
+    // Rows visible inside the block: borders (2) plus the header row (1).
+    let visible = area.height.saturating_sub(3) as usize;
+    render_scrollbar(frame, area, items.len(), visible, state.offset());
+}
+
+/// Scrollbar over the right border of `area`; hidden while everything fits.
+fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, visible: usize, offset: usize) {
+    if total <= visible || visible == 0 {
+        return;
+    }
+    let mut state = ScrollbarState::new(total - visible).position(offset);
+    frame.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut state,
+    );
 }
 
 fn border_style(focused: bool) -> Style {
@@ -513,6 +556,13 @@ fn draw_detail(frame: &mut Frame, app: &mut App) {
         .wrap(Wrap { trim: false })
         .scroll((d.scroll, 0));
     frame.render_widget(para, area);
+    render_scrollbar(
+        frame,
+        area,
+        total_rows,
+        inner.height as usize,
+        d.scroll as usize,
+    );
 }
 
 fn kv<'a>(key: &'a str, value: String) -> Line<'a> {
@@ -840,6 +890,24 @@ mod tests {
     #[test]
     fn search_results() {
         assert_snapshot!(render(&mut app_with_results(), 100, 30).backend());
+    }
+
+    #[test]
+    fn search_results_with_scrollbar() {
+        let mut app = app_with_results();
+        app.search.items = (0..30)
+            .map(|i| {
+                vuln(
+                    &format!("EUVD-2026-{i:05}"),
+                    &format!("CVE-2026-{i:05}"),
+                    Some(5.0),
+                    "A vulnerability that pads out the results list.",
+                )
+            })
+            .collect();
+        app.search.total = 30;
+        app.search.table.select(Some(0));
+        assert_snapshot!(render(&mut app, 100, 30).backend());
     }
 
     #[test]
