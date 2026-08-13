@@ -1,1 +1,8 @@
 /target
+
+# insta writes these while snapshots are pending review
+*.snap.new
+*.pending-snap
+
+# macOS
+.DS_Store

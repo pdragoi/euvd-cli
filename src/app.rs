@@ -268,6 +268,9 @@ pub struct LookupState {
     pub last_updated: Option<DateTime<Local>>,
 }
 
+// Written out rather than derived, to mirror `SearchState` above and keep the
+// starting values in one obvious place to edit.
+#[allow(clippy::derivable_impls)]
 impl Default for LookupState {
     fn default() -> Self {
         Self {
