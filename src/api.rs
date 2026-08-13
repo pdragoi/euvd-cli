@@ -8,8 +8,9 @@ use std::time::Duration;
 use serde::Deserialize;
 
 pub const BASE_URL: &str = "https://euvdservices.enisa.europa.eu/api";
-// Derived from Cargo.toml so a rename can never leave it stale.
-// pub const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
+/// Identifies this client to ENISA instead of ureq's default `ureq/<version>`.
+/// Built from Cargo.toml so a rename or version bump can never leave it stale.
+pub const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 /// Maximum page size accepted by the `/search` endpoint.
 pub const MAX_PAGE_SIZE: u32 = 100;
 
@@ -205,7 +206,7 @@ impl Client {
         let config = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_global(Some(Duration::from_secs(30)))
-            // .user_agent(USER_AGENT)
+            .user_agent(USER_AGENT)
             // Handle non-2xx statuses ourselves so we can surface the body.
             .http_status_as_error(false)
             .build();
