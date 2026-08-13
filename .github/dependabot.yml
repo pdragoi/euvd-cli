@@ -1,0 +1,31 @@
+version: 2
+
+updates:
+  # Rust dependencies. Cargo.lock is committed, so these PRs refresh it too and
+  # CI's `--locked` builds prove the new lock file actually works.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      # Routine upgrades arrive as one PR a week. Majors are deliberately left
+      # out so a breaking change is never buried in a batch of harmless bumps.
+      cargo-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Actions pinned in .github/workflows (actions/checkout, upload-artifact, …).
+  # Easy to forget these exist; they go stale and eventually get deprecated
+  # warnings or node-version EOL notices from GitHub.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ["*"]
