@@ -1,6 +1,6 @@
 # euvd-cli
 
-[![CI](https://github.com/pdragoi/euvd-cli/actions/workflows/rust.yml/badge.svg)](https://github.com/pdragoi/euvd-cli/actions/workflows/rust.yml)
+[![CI](https://github.com/pdragoi/euvd-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/pdragoi/euvd-rs/actions/workflows/rust.yml)[![Release](https://github.com/pdragoi/euvd-rs/actions/workflows/release.yml/badge.svg)](https://github.com/pdragoi/euvd-rs/actions/workflows/release.yml)
 
 A terminal UI for the [ENISA EU Vulnerability Database (EUVD)](https://euvd.enisa.europa.eu/), built with [ratatui](https://ratatui.rs). Browse, search and inspect vulnerabilities and advisories straight from your terminal.
 
