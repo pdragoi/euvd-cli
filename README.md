@@ -1,10 +1,38 @@
 # euvd-cli
 
+[![CI](https://github.com/pdragoi/euvd-cli/actions/workflows/rust.yml/badge.svg)](https://github.com/pdragoi/euvd-cli/actions/workflows/rust.yml)
+
 A terminal UI for the [ENISA EU Vulnerability Database (EUVD)](https://euvd.enisa.europa.eu/), built with [ratatui](https://ratatui.rs). Browse, search and inspect vulnerabilities and advisories straight from your terminal.
 
 ```
-cargo run
+ EUVD    1 Latest │ 2 Latest Exploited │ 3 Latest Critical │ 4 Search │ 5 Lookup
+┌ Filters ─────────────────┐┌ Results · 123 total · page 1/3 ──────────────────────────────────────────────────────────┐
+│      Text: openssl       ││  EUVD ID           CVE             CVSS  EPSS   Published    Description                 │
+│    Vendor:               ││▶ EUVD-2026-41256   CVE-2026-33592  9.8   1.5%   Jul 2, 2026  An unauthenticated remote at│
+│   Product:               ││  EUVD-2026-41276   CVE-2026-54430  5.1   1.5%   Jul 2, 2026  Server-Side Request Forgery │
+│  Assigner:               ││  EUVD-2026-41277   CVE-2026-54431  —     1.5%   Jul 2, 2026  A use-after-free during PKCS│
+│ From date: YYYY-MM-DD    ││                                                                                          │
+│   To date: YYYY-MM-DD    ││                                                                                          │
+└──────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────┘
+ j/k, ↑↓ move · Enter details · n/p, ←→ page · / filters · c collapse · 1-5/Tab tabs · r rerun · ? help · q quit
 ```
+
+## Install
+
+Download a prebuilt binary for your platform from the [latest release](https://github.com/pdragoi/euvd-cli/releases/latest) — macOS (Intel and Apple Silicon), Linux (x86_64 and arm64) and Windows are all built — then put it somewhere on your `PATH`:
+
+```
+tar -xzf euvd-cli-v0.1.0-aarch64-apple-darwin.tar.gz
+install -m 755 euvd-cli /usr/local/bin/
+```
+
+Or build it yourself with Rust 1.88 or newer:
+
+```
+cargo install --git https://github.com/pdragoi/euvd-cli
+```
+
+Then run `euvd-cli`. It needs no API key and no configuration.
 
 ## Tabs
 
@@ -46,16 +74,24 @@ Opening a row fetches the full record in the background, so the detail view incl
 | `?` | help |
 | `q`, `Ctrl-C` | quit |
 
-## Testing
+## Development
 
-`cargo test` runs unit tests plus [insta](https://insta.rs) snapshot tests that render every screen into a `TestBackend` terminal (see `src/snapshots/`). After an intentional UI change, refresh the snapshots with [`cargo-insta`](https://insta.rs/docs/cli/):
+Minimum supported Rust version is **1.88** (the code uses let-chains). `cargo run` starts the app against the live API.
+
+`cargo test` runs unit tests plus [insta](https://insta.rs) snapshot tests that render every screen into a `TestBackend` terminal (see `src/snapshots/`). The tests do no network I/O. After an intentional UI change, refresh the snapshots with [`cargo-insta`](https://insta.rs/docs/cli/):
 
 ```
 cargo insta review   # or: cargo insta accept
 ```
+
+CI runs `cargo fmt --check`, `cargo clippy -- -D warnings` and the test suite on Linux, macOS and Windows; please make sure those pass before opening a pull request.
 
 ## Notes
 
 - Uses the public EUVD API at `https://euvdservices.enisa.europa.eu/api`; no API key required.
 - The feed endpoints return at most 8 records; search pages are 50 records.
 - All requests run on background threads, so the UI never blocks.
+
+## Disclaimer
+
+This is an unofficial, community-built client. It is not affiliated with, endorsed by, or supported by ENISA or the European Union. Vulnerability data comes from the EUVD API as-is; consult the [official EUVD site](https://euvd.enisa.europa.eu/) as the authoritative source.
