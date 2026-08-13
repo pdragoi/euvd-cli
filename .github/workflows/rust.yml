@@ -3,23 +3,10 @@ name: CI
 # Runs the same checks that release.yml gates on, so a red release is caught
 # on the pull request rather than at tag time.
 
-# Skipped for docs-only changes. This is a denylist rather than a `paths:`
-# allowlist on purpose: anything new (build.rs, tests/, rust-toolchain.toml…)
-# is covered automatically, instead of silently going untested until someone
-# remembers to extend the list. A commit touching both code and docs still runs.
-# (GitHub Actions has no YAML anchors, so the list is repeated.)
 on:
   push:
     branches: ["master"]
-    paths-ignore:
-      - "**/*.md"
-      - "LICENSE*"
-      - ".gitignore"
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "LICENSE*"
-      - ".gitignore"
 
 env:
   CARGO_TERM_COLOR: always
