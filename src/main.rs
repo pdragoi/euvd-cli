@@ -1,4 +1,4 @@
-//! euvd-rs — terminal UI for the ENISA EU Vulnerability Database.
+//! euvd-cli — terminal UI for the ENISA EU Vulnerability Database.
 
 mod api;
 mod app;

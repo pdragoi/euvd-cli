@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  BIN: euvd-rs
+  BIN: euvd-cli
 
 jobs:
   version:

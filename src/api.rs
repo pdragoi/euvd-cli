@@ -8,7 +8,8 @@ use std::time::Duration;
 use serde::Deserialize;
 
 pub const BASE_URL: &str = "https://euvdservices.enisa.europa.eu/api";
-// pub const USER_AGENT: &str = concat!("euvd-rs/", env!("CARGO_PKG_VERSION"));
+// Derived from Cargo.toml so a rename can never leave it stale.
+// pub const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 /// Maximum page size accepted by the `/search` endpoint.
 pub const MAX_PAGE_SIZE: u32 = 100;
 

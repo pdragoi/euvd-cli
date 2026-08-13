@@ -1,4 +1,4 @@
-# euvd-rs
+# euvd-cli
 
 A terminal UI for the [ENISA EU Vulnerability Database (EUVD)](https://euvd.enisa.europa.eu/), built with [ratatui](https://ratatui.rs). Browse, search and inspect vulnerabilities and advisories straight from your terminal.
 
