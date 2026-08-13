@@ -18,7 +18,7 @@ cargo run
 
 All tabs load their data in the background at startup, so switching tabs shows results immediately.
 
-Search filters: free text, vendor, product, assigner (CNA), date range (`YYYY-MM-DD`), exploited (Any/Yes/No), CVSS range (0–10) and EPSS percentage range (0–100).
+Search filters: free text, vendor, product, assigner (CNA), date range (`YYYY-MM-DD`), exploited (Any/Yes/No), CVSS range (0–10) and EPSS percentage range (0–100). They live in a collapsible sidebar to the left of the results, hidden by default so the results get the full width. Press `c` to show or hide it; focusing the filters with `/` always expands it first.
 
 The assigner filter is a multiselect: press `Space` on the field to pick from the known assigners (fetched once from `/api/assigners/names`), and/or type arbitrary names directly, comma-separated. All selected assigners are OR-ed together in one search.
 
@@ -36,6 +36,7 @@ Opening a row fetches the full record in the background, so the detail view incl
 | `Enter` | run search / open details / fetch lookup |
 | `Esc` | back / leave input |
 | `/` | focus the search filters |
+| `c` | show / hide the filter sidebar |
 | `n` / `p` | next / previous results page |
 | `Space` | cycle the exploited filter |
 | `←`/`→`, `Home`/`End`, `Delete` | move the cursor / edit inside a text input |

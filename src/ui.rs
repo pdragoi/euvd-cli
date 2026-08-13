@@ -13,8 +13,8 @@ use ratatui::{
 
 use crate::api::{Advisory, Vulnerability};
 use crate::app::{
-    App, DetailContent, FILTER_ASSIGNER, FILTER_EXPLOITED, FILTER_LABELS, Overlay, SearchFocus,
-    TAB_LOOKUP, TAB_SEARCH, TABS,
+    App, DetailContent, FILTER_ASSIGNER, FILTER_EXPLOITED, FILTER_LABELS, N_FILTERS, Overlay,
+    SearchFocus, TAB_LOOKUP, TAB_SEARCH, TABS,
 };
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -84,18 +84,32 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect) {
 
 // --- search tab -----------------------------------------------------------
 
+/// Width of the filter sidebar on the Search tab: 2 border cells, a
+/// 12-char label column and [`FILTER_VALUE_W`] chars of value.
+const FILTER_SIDEBAR_W: u16 = 28;
+/// Minimum rendered width of a filter value (pad/highlight width).
+const FILTER_VALUE_W: usize = 14;
+
 fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
-    let [filter_area, results_area] =
-        Layout::vertical([Constraint::Length(5), Constraint::Min(3)]).areas(area);
+    // Collapsed: the sidebar is hidden and the results span the full width.
+    let (filter_area, results_area) = if app.search.filters_collapsed {
+        (None, area)
+    } else {
+        let [filters, results] =
+            Layout::horizontal([Constraint::Length(FILTER_SIDEBAR_W), Constraint::Min(30)])
+                .areas(area);
+        (Some(filters), results)
+    };
 
     let focused_filter = match app.search.focus {
         SearchFocus::Filters(i) => Some(i),
         SearchFocus::Results => None,
     };
 
-    // One field per (line, label) cell; rendered as three rows of inputs.
-    let field = |i: usize, min_w: usize| -> Vec<Span<'_>> {
+    // One filter per line, in a vertical list left of the results.
+    let field = |i: usize| -> Line<'_> {
         let focused = focused_filter == Some(i);
+        let min_w = FILTER_VALUE_W;
         let raw = match i {
             FILTER_EXPLOITED => match app.search.exploited {
                 None => "Any",
@@ -105,7 +119,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
             _ => app.search.field(i).unwrap_or(""),
         };
         let label = Span::styled(
-            format!("{}: ", FILTER_LABELS[i]),
+            format!("{:>10}: ", FILTER_LABELS[i]),
             Style::new().add_modifier(Modifier::DIM),
         );
         if focused && i != FILTER_EXPLOITED {
@@ -116,8 +130,7 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
                 min_w,
                 Style::new().fg(Color::Black).bg(ACCENT),
             ));
-            spans.push(Span::raw("  "));
-            return spans;
+            return Line::from(spans);
         }
         let mut value = raw.to_string();
         let placeholder = value.is_empty();
@@ -134,34 +147,20 @@ fn draw_search(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Style::new().fg(Color::White)
         };
-        vec![
+        Line::from(vec![
             label,
             Span::styled(format!("{value:<min_w$}"), value_style),
-            Span::raw("  "),
-        ]
+        ])
     };
 
-    let mut l1: Vec<Span> = vec![Span::raw(" ")];
-    l1.extend(field(0, 18));
-    l1.extend(field(1, 14));
-    l1.extend(field(2, 14));
-    l1.extend(field(3, 10));
-    let mut l2: Vec<Span> = vec![Span::raw(" ")];
-    l2.extend(field(4, 10));
-    l2.extend(field(5, 10));
-    l2.extend(field(FILTER_EXPLOITED, 3));
-    let mut l3: Vec<Span> = vec![Span::raw(" ")];
-    l3.extend(field(7, 4));
-    l3.extend(field(8, 4));
-    l3.extend(field(9, 4));
-    l3.extend(field(10, 4));
-
     let filters_focused = focused_filter.is_some();
-    let block = Block::bordered()
-        .title(" Filters ")
-        .border_style(border_style(filters_focused));
-    let para = Paragraph::new(vec![Line::from(l1), Line::from(l2), Line::from(l3)]).block(block);
-    frame.render_widget(para, filter_area);
+    if let Some(filter_area) = filter_area {
+        let lines: Vec<Line> = (0..N_FILTERS).map(field).collect();
+        let block = Block::bordered()
+            .title(" Filters ")
+            .border_style(border_style(filters_focused));
+        frame.render_widget(Paragraph::new(lines).block(block), filter_area);
+    }
 
     let s = &app.search;
     let title = if s.loading {
@@ -464,33 +463,6 @@ fn draw_assigner_picker(frame: &mut Frame, app: &App) {
 // --- status bar ---------------------------------------------------------------
 
 fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let hints = match &app.overlay {
-        Overlay::Help { .. } => "j/k, ↑↓ scroll · g/G top/bottom · Esc close",
-        Overlay::Detail(_) => "j/k, ↑↓ scroll · g/G top/bottom · 1-9/o open reference · Esc/q back",
-        Overlay::AssignerPicker { .. } => {
-            "j/k, ↑↓ move · Space toggle · Ctrl-U clear · Enter/Esc done"
-        }
-        Overlay::None => match app.tab {
-            TAB_SEARCH => match app.search.focus {
-                SearchFocus::Filters(i) if i == FILTER_EXPLOITED => {
-                    "Space toggle · Tab/↑↓ move · Enter search · Ctrl-U reset · Esc results"
-                }
-                SearchFocus::Filters(i) if i == FILTER_ASSIGNER => {
-                    "Space pick from list · or type names, comma-separated · Enter search · Esc results"
-                }
-                SearchFocus::Filters(_) => {
-                    "type to edit · Tab/↑↓ move · Enter search · Ctrl-U clear · Esc results"
-                }
-                SearchFocus::Results => {
-                    "j/k, ↑↓ move · Enter details · n/p, ←→ page · / filters · 1-5/Tab tabs · r rerun · ? help · q quit"
-                }
-            },
-            TAB_LOOKUP if app.lookup.editing => "type an id · Enter fetch · Esc leave input",
-            TAB_LOOKUP => "i edit · Enter fetch · 1-5/Tab tabs · ? help · q quit",
-            _ => "j/k, ↑↓ move · Enter details · r refresh · 1-5/Tab tabs · ? help · q quit",
-        },
-    };
-
     let error = match app.tab {
         TAB_SEARCH => app.search.error.as_deref(),
         TAB_LOOKUP => app.lookup.error.as_deref(),
@@ -508,6 +480,55 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let right_w = right.width() as u16;
+    // Columns the hints may use: the bar minus the right-hand status and the
+    // one-column indent below.
+    let avail = area.width.saturating_sub(right_w + 1) as usize;
+
+    let hints = match &app.overlay {
+        Overlay::Help { .. } => "j/k, ↑↓ scroll · g/G top/bottom · Esc close",
+        Overlay::Detail(_) => "j/k, ↑↓ scroll · g/G top/bottom · 1-9/o open reference · Esc/q back",
+        Overlay::AssignerPicker { .. } => {
+            "j/k, ↑↓ move · Space toggle · Ctrl-U clear · Enter/Esc done"
+        }
+        Overlay::None => match app.tab {
+            TAB_SEARCH => match app.search.focus {
+                SearchFocus::Filters(i) if i == FILTER_EXPLOITED => {
+                    "Space toggle · Tab/↑↓ move · Enter search · Ctrl-U reset · Esc results"
+                }
+                SearchFocus::Filters(i) if i == FILTER_ASSIGNER => {
+                    "Space pick from list · or type names, comma-separated · Enter search · Esc results"
+                }
+                SearchFocus::Filters(_) => {
+                    "type to edit · Tab/↑↓ move · Enter search · Ctrl-U clear · Esc results"
+                }
+                // Adding the collapse key pushes this line past 100 columns,
+                // so drop the ↑↓/←→ aliases when the terminal is too narrow —
+                // the key list itself stays complete either way.
+                SearchFocus::Results => {
+                    let (wide, narrow) = if app.search.filters_collapsed {
+                        (
+                            "j/k, ↑↓ move · Enter details · n/p, ←→ page · / filters · c expand · 1-5/Tab tabs · r rerun · ? help · q quit",
+                            "j/k move · Enter details · n/p page · / filters · c show · 1-5/Tab tabs · r rerun · ? help · q quit",
+                        )
+                    } else {
+                        (
+                            "j/k, ↑↓ move · Enter details · n/p, ←→ page · / filters · c collapse · 1-5/Tab tabs · r rerun · ? help · q quit",
+                            "j/k move · Enter details · n/p page · / filters · c hide · 1-5/Tab tabs · r rerun · ? help · q quit",
+                        )
+                    };
+                    if avail >= wide.chars().count() {
+                        wide
+                    } else {
+                        narrow
+                    }
+                }
+            },
+            TAB_LOOKUP if app.lookup.editing => "type an id · Enter fetch · Esc leave input",
+            TAB_LOOKUP => "i edit · Enter fetch · 1-5/Tab tabs · ? help · q quit",
+            _ => "j/k, ↑↓ move · Enter details · r refresh · 1-5/Tab tabs · ? help · q quit",
+        },
+    };
+
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(right_w)]).areas(area);
     frame.render_widget(
@@ -773,6 +794,7 @@ fn draw_help(frame: &mut Frame, app: &mut App) {
         Line::default(),
         section(" Search"),
         key("/", "focus filters"),
+        key("c", "collapse / expand the filters"),
         key("n/p, ←→", "next / previous page"),
         key("Space", "cycle exploited / pick assigners"),
         key("←/→", "move cursor in a text input"),
@@ -882,6 +904,9 @@ mod tests {
         app.search.page = 0;
         app.search.searched = true;
         app.search.focus = SearchFocus::Results;
+        // Set explicitly so these snapshots keep covering the sidebar layout
+        // regardless of which state the app starts in.
+        app.search.filters_collapsed = false;
         app.search.table.select(Some(0));
         app
     }
@@ -896,6 +921,7 @@ mod tests {
         let mut app = App::new();
         app.tab = TAB_SEARCH;
         app.search.focus = SearchFocus::Filters(0);
+        app.search.filters_collapsed = false;
         app.search.fields[0] = "openssl".into();
         app.search.cursor = 3;
         assert_snapshot!(render(&mut app, 100, 30).backend());
@@ -904,6 +930,20 @@ mod tests {
     #[test]
     fn search_results() {
         assert_snapshot!(render(&mut app_with_results(), 100, 30).backend());
+    }
+
+    /// A wide terminal has room for the ↑↓/←→ aliases the 100-column status
+    /// bar has to drop.
+    #[test]
+    fn search_results_wide_status_bar() {
+        assert_snapshot!(render(&mut app_with_results(), 120, 10).backend());
+    }
+
+    #[test]
+    fn search_results_with_collapsed_filters() {
+        let mut app = app_with_results();
+        app.search.filters_collapsed = true;
+        assert_snapshot!(render(&mut app, 100, 30).backend());
     }
 
     #[test]
@@ -987,6 +1027,7 @@ mod tests {
         // One picked option plus a custom free-text entry.
         app.search.fields[3] = "CERT-PL,my-custom-cna".into();
         app.search.focus = SearchFocus::Filters(3);
+        app.search.filters_collapsed = false;
         app.assigner_opts.names = ["ENISA", "NCSC-FI", "NCSC-NL", "CERT-PL", "SK-CERT"]
             .map(String::from)
             .to_vec();

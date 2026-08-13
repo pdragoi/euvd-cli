@@ -96,6 +96,9 @@ pub struct SearchState {
     pub cursor: usize,
     pub exploited: Option<bool>,
     pub focus: SearchFocus,
+    /// Hides the filter sidebar so the results use the full width. Focusing
+    /// the filters re-expands it.
+    pub filters_collapsed: bool,
     pub items: Vec<Vulnerability>,
     pub total: u64,
     pub page: u32,
@@ -115,6 +118,7 @@ impl Default for SearchState {
             cursor: 0,
             exploited: None,
             focus: SearchFocus::Results,
+            filters_collapsed: true,
             items: Vec::new(),
             total: 0,
             page: 0,
@@ -678,7 +682,13 @@ impl App {
                             self.run_search(self.search.page);
                         }
                     }
+                    KeyCode::Char('c') => {
+                        self.search.filters_collapsed = !self.search.filters_collapsed;
+                    }
                     KeyCode::Char('/') | KeyCode::Char('f') | KeyCode::Char('i') => {
+                        // Editing hidden fields would be confusing, so focusing
+                        // the filters always brings the sidebar back.
+                        self.search.filters_collapsed = false;
                         self.search.cursor = self.search.char_len(0);
                         self.search.focus = SearchFocus::Filters(0);
                     }
@@ -1223,6 +1233,41 @@ mod tests {
         app.on_key(ctrl('u'));
         assert_eq!(app.search.fields[0], "");
         assert_eq!(app.search.cursor, 0);
+    }
+
+    #[test]
+    fn c_toggles_the_filter_sidebar() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.filters_collapsed = false;
+
+        press(&mut app, KeyCode::Char('c'));
+        assert!(app.search.filters_collapsed);
+        press(&mut app, KeyCode::Char('c'));
+        assert!(!app.search.filters_collapsed);
+    }
+
+    #[test]
+    fn focusing_filters_expands_a_collapsed_sidebar() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.filters_collapsed = true;
+
+        press(&mut app, KeyCode::Char('/'));
+        assert!(!app.search.filters_collapsed);
+        assert_eq!(app.search.focus, SearchFocus::Filters(0));
+    }
+
+    #[test]
+    fn c_types_into_a_focused_filter_instead_of_collapsing() {
+        let mut app = app();
+        app.tab = TAB_SEARCH;
+        app.search.focus = SearchFocus::Filters(0);
+        app.search.filters_collapsed = false;
+
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.search.fields[0], "c");
+        assert!(!app.search.filters_collapsed);
     }
 
     #[test]
