@@ -86,6 +86,18 @@ cargo insta review   # or: cargo insta accept
 
 CI runs `cargo fmt --check`, `cargo clippy -- -D warnings` and the test suite on Linux, macOS and Windows; please make sure those pass before opening a pull request.
 
+### Releases
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org) — `feat:` for features, `fix:` for bug fixes, `chore:`/`docs:`/`refactor:` for everything else. [release-plz](https://release-plz.dev) reads them to decide the next version, so the prefix on a commit is what determines whether a release is minor or patch.
+
+Releasing is then just merging a pull request:
+
+1. release-plz keeps a `chore: release vX.Y.Z` PR open, bumping `Cargo.toml` and writing `CHANGELOG.md`.
+2. Merging it tags the commit and creates the GitHub release.
+3. The new tag triggers the release workflow, which builds macOS, Linux and Windows binaries and attaches them, along with `SHA256SUMS`.
+
+The binaries take a few minutes to appear after the release itself. Releases can also be produced by hand from Actions → Release → Run workflow, which reads the version straight from `Cargo.toml`.
+
 ## Notes
 
 - Uses the public EUVD API at `https://euvdservices.enisa.europa.eu/api`; no API key required.

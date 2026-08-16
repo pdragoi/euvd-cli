@@ -1,0 +1,62 @@
+name: release-plz
+
+# Turns conventional commits on master into releases:
+#
+#   1. `release-pr` keeps a "chore: release vX.Y.Z" PR open, bumping the version
+#      in Cargo.toml and writing CHANGELOG.md from the commits since the last
+#      release (feat: -> minor, fix: -> patch).
+#   2. Merging that PR makes `release` create the git tag and GitHub release.
+#   3. That new tag triggers release.yml, which builds the five targets and
+#      attaches the binaries to the release that already exists.
+#
+# Step 3 is why RELEASE_PLZ_TOKEN must be a PAT rather than the default
+# GITHUB_TOKEN: pushes made with GITHUB_TOKEN deliberately do not start new
+# workflow runs, so release.yml would never fire and no binaries would ship.
+# The same restriction would leave the release PR with no CI checks at all.
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  # Tags and releases a version that is in Cargo.toml but not yet released.
+  # A no-op on ordinary pushes, so it only acts once the release PR merges.
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # release-plz reads the whole commit history to work out the bump.
+          fetch-depth: 0
+      - run: rustup toolchain install stable --profile minimal
+      - uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # Opens or updates the release PR.
+  release-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    # Two runs racing would fight over the same PR branch.
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install stable --profile minimal
+      - uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
